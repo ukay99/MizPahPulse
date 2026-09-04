@@ -2,10 +2,11 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Card, Badge, cn, StatusDot, EmptyState, Skeleton } from '@mizpah-pulse/ui';
-import { Webhook, Plus, Copy, Trash2, X } from 'lucide-react';
+import { Webhook, Plus, Copy, Trash2, X, ChevronDown, ChevronRight, Inbox } from 'lucide-react';
 import { isValidUrl } from '@/lib/validators';
 import { apiFetch, ApiClientError } from '@/lib/api-client';
 import { formatTimeAgo } from '@/lib/date-utils';
+import { truncateHash } from '@/lib/display-utils';
 
 const EVENT_OPTIONS = [
   'PAYMENT',
@@ -37,6 +38,39 @@ interface ApiWebhook {
   deliveries?: Array<{ id: string; createdAt: string }>;
 }
 
+interface DeliveryItem {
+  id: string;
+  eventId: string;
+  status: 'PENDING' | 'RETRYING' | 'SUCCESS' | 'FAILED';
+  statusCode?: number | null;
+  attempt: number;
+  error?: string | null;
+  createdAt: string;
+  completedAt?: string | null;
+}
+
+interface DeliveryPage {
+  data: DeliveryItem[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
+
+/** Map a delivery status to the Badge variant used in the log viewer. */
+function deliveryBadgeVariant(
+  status: DeliveryItem['status'],
+): 'success' | 'warning' | 'error' | 'default' {
+  switch (status) {
+    case 'SUCCESS':
+      return 'success';
+    case 'RETRYING':
+    case 'PENDING':
+      return 'warning';
+    case 'FAILED':
+      return 'error';
+    default:
+      return 'default';
+  }
+}
+
 function mapWebhook(w: ApiWebhook): WebhookItem {
   const lastAt = w.lastDeliveryAt ? new Date(w.lastDeliveryAt).getTime() : null;
   return {
@@ -60,6 +94,40 @@ export default function WebhooksPage() {
   const [endpointError, setEndpointError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  // Delivery-log viewer state (issue #17): one expansion at a time; the map
+  // caches already-fetched delivery pages per webhook so re-expanding is free.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [deliveriesByWebhook, setDeliveriesByWebhook] = useState<Record<string, DeliveryItem[]>>(
+    {},
+  );
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+
+  const loadDeliveries = useCallback(
+    async (webhookId: string) => {
+      if (deliveriesByWebhook[webhookId]) return; // already cached
+      setDeliveryLoading(true);
+      setDeliveryError(null);
+      try {
+        const page = await apiFetch<DeliveryPage>(
+          `/api/v1/webhooks/${webhookId}/deliveries?limit=10`,
+        );
+        setDeliveriesByWebhook((prev) => ({ ...prev, [webhookId]: page.data ?? [] }));
+      } catch (err) {
+        setDeliveryError(err instanceof Error ? err.message : 'Failed to load delivery logs');
+      } finally {
+        setDeliveryLoading(false);
+      }
+    },
+    [deliveriesByWebhook],
+  );
+
+  const toggleExpanded = (id: string) => {
+    const next = expandedId === id ? null : id;
+    setExpandedId(next);
+    if (next) void loadDeliveries(next);
+  };
 
   const loadWebhooks = useCallback(async () => {
     setLoading(true);
@@ -151,6 +219,9 @@ export default function WebhooksPage() {
   const activeCount = webhooks.filter((w) => w.status === 'active').length;
   const totalDelivered = webhooks.reduce((s, w) => s + w.deliveries, 0);
   const configuredEvents = webhooks.reduce((s, w) => s + w.events.length, 0);
+
+  /** Latest deliveries for the expanded webhook, or null while never loaded. */
+  const expandedDeliveries = expandedId ? (deliveriesByWebhook[expandedId] ?? null) : null;
 
   return (
     <div className="space-y-6">
@@ -353,6 +424,19 @@ export default function WebhooksPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <button
+                    onClick={() => toggleExpanded(wh.id)}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800"
+                    aria-expanded={expandedId === wh.id}
+                    aria-controls={`deliveries-${wh.id}`}
+                  >
+                    {expandedId === wh.id ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                    Delivery log
+                  </button>
+                  <button
                     onClick={() => handleCopy(wh.endpoint)}
                     className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-indigo-500 dark:hover:bg-slate-800"
                     aria-label={`Copy endpoint URL${copyStatus === wh.endpoint ? ' (copied)' : ''}`}
@@ -368,6 +452,72 @@ export default function WebhooksPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Expandable delivery log viewer (issue #17) */}
+              {expandedId === wh.id && (
+                <div
+                  id={`deliveries-${wh.id}`}
+                  className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 dark:border-slate-800 dark:bg-slate-950/40"
+                >
+                  <div className="mb-3 flex items-center gap-2">
+                    <Inbox className="h-4 w-4 text-slate-400" />
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Recent deliveries
+                    </h3>
+                  </div>
+
+                  {deliveryError && (
+                    <p role="alert" className="text-sm text-red-500">
+                      {deliveryError}
+                    </p>
+                  )}
+
+                  {deliveryLoading ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 2 }).map((_, i) => (
+                        <Skeleton key={i} className="h-12 w-full" />
+                      ))}
+                    </div>
+                  ) : expandedDeliveries && expandedDeliveries.length === 0 ? (
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      No delivery attempts recorded for this webhook yet.
+                    </p>
+                  ) : expandedDeliveries ? (
+                    <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {expandedDeliveries.map((d) => (
+                        <li
+                          key={d.id}
+                          className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5"
+                        >
+                          <Badge variant={deliveryBadgeVariant(d.status)} size="sm" dot>
+                            {d.status}
+                          </Badge>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            Event <span className="font-mono">{truncateHash(d.eventId)}</span>
+                          </span>
+                          {d.statusCode !== null && d.statusCode !== undefined && (
+                            <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                              HTTP {d.statusCode}
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-400">Attempt {d.attempt}</span>
+                          <time
+                            dateTime={d.createdAt}
+                            className="ml-auto text-xs text-slate-400 dark:text-slate-500"
+                          >
+                            {formatTimeAgo(new Date(d.createdAt))}
+                          </time>
+                          {d.status === 'FAILED' && d.error && (
+                            <p className="w-full truncate text-xs text-red-500" title={d.error}>
+                              {d.error}
+                            </p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              )}
             </Card>
           ))}
         </div>
