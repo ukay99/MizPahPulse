@@ -260,8 +260,13 @@ Full **Freighter wallet** integration on Stellar Testnet with comprehensive erro
 | `GET` | `/api/v1/contracts/:id` | Contract details + stats |
 | `GET` | `/api/v1/contracts/:id/events` | Paginated contract events |
 | `GET` | `/api/v1/stats` | Network-wide statistics (incl. top accounts) |
+| `GET` | `/api/v1/stats/timeseries` | Event counts bucketed by hour/day over 24h/7d/30d |
 | `GET` | `/api/v1/status` | Service dependency status (DB, WS, last event) |
 | `GET` | `/api/v1/search` | Multi-entity search |
+| `GET` | `/api/v1/audit-logs` | Audit log retrieval (filter by action/resource/user) |
+| `GET` | `/api/v1/preferences` | Read notification preferences |
+| `PATCH` | `/api/v1/preferences` | Update notification preferences |
+| `GET` | `/api/v1/webhooks/:id/deliveries` | Delivery attempt history per webhook |
 | `POST` | `/api/v1/webhooks` | Register webhook endpoint |
 | `POST` | `/api/v1/webhooks/batch` | Register up to 50 webhooks atomically |
 
