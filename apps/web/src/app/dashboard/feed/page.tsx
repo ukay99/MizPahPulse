@@ -8,11 +8,13 @@ import { formatTimeAgo } from '@/lib/date-utils';
 import { truncateAddress } from '@/lib/display-utils';
 import { formatCompactNumber } from '@/lib/format-number';
 import { MAX_EVENT_BUFFER } from '@/lib/constants';
+import { serializeEventsToCsv, eventsCsvFilename, downloadCsv } from '@/lib/csv-export';
 import { prefersReducedMotion } from '@/lib/reduced-motion';
 import {
   Activity,
   ArrowUpDown,
   Check,
+  Download,
   Filter,
   RefreshCw,
   SlidersHorizontal,
@@ -473,6 +475,18 @@ export default function FeedPage() {
 
   const sortedEvents = sortOrder === 'desc' ? filteredEvents : [...filteredEvents].reverse();
 
+  // Export the currently filtered/sorted events as a CSV download (#15).
+  const exportCsv = useCallback(() => {
+    const rows = sortedEvents.map((event) => ({
+      eventType: event.type,
+      category: event.category,
+      account: event.from,
+      amount: event.amount,
+      timestamp: new Date(event.timestamp).toISOString(),
+    }));
+    downloadCsv(eventsCsvFilename(), serializeEventsToCsv(rows));
+  }, [sortedEvents]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -616,6 +630,15 @@ export default function FeedPage() {
         >
           <ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
           {sortOrder === 'desc' ? 'Newest first' : 'Oldest first'}
+        </button>
+        <button
+          onClick={exportCsv}
+          disabled={sortedEvents.length === 0}
+          className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          aria-label="Export filtered events as CSV"
+        >
+          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+          Export CSV
         </button>
       </div>
 
